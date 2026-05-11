@@ -1,114 +1,78 @@
 # Multi-Agent Information Diffusion Simulator
 
-## Overview
+<img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+"/> <img src="https://img.shields.io/badge/torch-2.4.1-red" alt="PyTorch"/> <img src="https://img.shields.io/badge/transformers-4.46.0-green" alt="Hugging Face"/> <img src="https://img.shields.io/badge/license-MIT-yellow" alt="MIT"/>
 
-This project implements a multi-agent simulation framework for studying information diffusion, manipulative influence, emotional contagion, and adversarial communication in social networks.
-
-The system models:
-
-- ordinary users,
-- adversarial/red-team actors,
-- LLM-based autonomous agents,
-- stochastic repost dynamics,
-- cognitive state evolution,
-- and transformer-based defensive moderation systems.
-
-The simulator combines:
-
-- graph theory,
-- probabilistic diffusion,
-- social influence modeling,
-- emotional propagation,
-- and neural NLP-based risk analysis.
-
-The project is intended for:
-
-- AI safety research,
-- misinformation analysis,
-- cyberpsychology,
-- adversarial LLM behavior studies,
-- information warfare simulation,
-- and social network experimentation.
+**Мультиагентный симулятор распространения информации** в социальных сетях с моделированием когнитивных состояний, эмоционального заражения, манипулятивных атак и нейросетевого анализа рисков.
 
 ---
 
-# Table of Contents
+## 📌 Обзор
 
-1. Project Goals
-2. System Architecture
-3. Mathematical Model
-4. Agent Types
-5. Cognitive State Model
-6. Message Model
-7. Diffusion Dynamics
-8. Blue Agent
-9. LLM Agents
-10. Graph Generation
-11. Visualization System
-12. File Structure
-13. Installation
-14. Dependencies
-15. Running the Simulation
-16. Output Files
-17. Visualization Guide
-18. JSON Output Specification
-19. Research Applications
-20. Future Improvements
+Симулятор позволяет изучать динамику распространения информации в гетерогенных социальных графах, где агенты могут быть:
+
+- **Обычными пользователями** (U) – нейтральные сообщения, эволюция убеждений (b), скептицизма (c) и эмоций (e);
+- **Красными (враждебными) агентами** (R) – генерируют угрозы и манипуляции;
+- **LLM-агентами** (L) – используют языковую модель (TinyLlama) для генерации контента (опционально).
+
+Система включает **Blue Agent** – классификатор рисков на основе DeBERTa-v3-base, оценивающий опасность текстов (угрозы, манипуляции) и вычисляющий глобальный уровень риска.
+
+**Визуализация** – интерактивный HTML-граф с таймлайном, настройками размера узлов/длины рёбер и модальными окнами с полной историей состояний каждого агента.
 
 ---
 
-# 1. Project Goals
+## ✨ Возможности
 
-The main goal of the simulator is to reproduce realistic information propagation scenarios in heterogeneous social networks.
-
-The system allows experimentation with:
-
-- manipulative campaigns,
-- coordinated influence operations,
-- emotional amplification,
-- moderation strategies,
-- adversarial content generation,
-- and defensive AI systems.
-
-The framework can be used to study:
-
-- cascade formation,
-- polarization,
-- emotional escalation,
-- influence centrality,
-- and dangerous content propagation.
+- ✅ Генерация small-world графа (Newman–Watts–Strogatz) с добавлением специальных узлов
+- ✅ Стохастическая модель репостов (логистическая вероятность от когнитивных факторов)
+- ✅ Эволюция трёхмерного состояния пользователя:  
+  - `b` – склонность к сообщению (bias)  
+  - `c` – консерватизм (consistency)  
+  - `e` – эмоциональное состояние (emotional factor)
+- ✅ Механизм затухания информации со временем (decay)
+- ✅ Сохранение полной истории состояний всех узлов на каждом шаге
+- ✅ Анализ рисков Blue Agent на основе **DeBERTa-v3-base** (или Qwen с LoRA)
+- ✅ Поддержка GPU с 4‑битной квантизацией (bitsandbytes)
+- ✅ Интерактивная визуализация на Pyvis:
+  - Цвет и форма узлов в зависимости от роли (голубой круг/красный квадрат/жёлтый треугольник)
+  - Таймлайн с анимацией распространения сообщений
+  - Настройка размера узлов и длины рёбер
+  - Двойной клик по узлу – таблица значений `b,c,e` по времени
+  - Двойной клик по ребру – все сообщения на этом ребре
+- ✅ Кэширование анализа текстов Blue Agent для ускорения повторных запусков
+- ✅ Автоматическое сохранение результатов в папку `results/`
 
 ---
 
-# 2. System Architecture
-
-The project consists of several interacting modules.
+## 🧱 Архитектура
 
 ```text
-                   ┌────────────────────┐
-                   │   graph_structure  │
-                   │  Social Graph Gen  │
-                   └─────────┬──────────┘
-                             │
-                             ▼
-                   ┌────────────────────┐
-                   │    simulation.py   │
-                   │ Diffusion Engine   │
-                   └─────────┬──────────┘
-                             │
-          ┌──────────────────┼──────────────────┐
-          ▼                  ▼                  ▼
- ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
- │  Red Agents    │ │  User Agents   │ │   LLM Agents   │
- └────────────────┘ └────────────────┘ └────────────────┘
-                             │
-                             ▼
-                   ┌────────────────────┐
-                   │    Blue Agent      │
-                   │ Risk Classification│
-                   └─────────┬──────────┘
-                             ▼
-                   ┌────────────────────┐
-                   │   visualization    │
-                   │ Interactive HTML   │
-                   └────────────────────┘
+                ┌─────────────────────┐
+                │   graph_structure    │
+                │    создание графа    │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │    simulation.py     │
+                │  диффузия сообщений  │
+                └──────────┬───────────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                 ▼
+   ┌──────────┐      ┌──────────┐      ┌──────────┐
+   │ Красные  │      │Пользова- │      │ LLM-     │
+   │ агенты R │      │ тели U   │      │агенты L  │
+   └──────────┘      └──────────┘      └──────────┘
+                                       (опционально)
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │    Blue Agent        │
+                │ анализ рисков        │
+                └──────────┬───────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │   visualization.py   │
+                │  HTML + JS           │
+                └──────────────────────┘
