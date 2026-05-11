@@ -1,3 +1,4 @@
+# run.py
 from graph_structure import create_graph
 from simulation import simulate_diffusion
 from visualization import visualize_graph
@@ -10,14 +11,23 @@ import networkx as nx
 import os
 
 
-N_USERS = 27
-N_RED = 7
+N_USERS = 11
+N_RED = 5
 N_LLM = 0
-AVG_DEGREE = 4
-T_STEPS = 11
+AVG_DEGREE = 3
+T_STEPS = 17
 
 MESSAGES_PATH = r"C:\Users\Vlada\Desktop\llm_attaks\graph\data\messages.json"
-OUTPUT_PATH = "simulation_result.json"
+
+# =====================================================
+# НАСТРОЙКИ ПУТЕЙ ДЛЯ СОХРАНЕНИЯ
+# =====================================================
+
+OUTPUT_DIR = "results"
+os.makedirs(OUTPUT_DIR, exist_ok=True)  # Создаёт папку если её нет
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, "simulation_result.json")
+VIZ_PATH = os.path.join(OUTPUT_DIR, "network_visualization_pro.html")
+
 
 
 # =====================================================
@@ -27,6 +37,7 @@ OUTPUT_PATH = "simulation_result.json"
 print("=" * 50)
 print("🔧 CREATING GRAPH")
 print("=" * 50)
+print(f"📁 Results will be saved to: {OUTPUT_DIR}")
 
 # Проверяем существование файла с сообщениями
 if not os.path.exists(MESSAGES_PATH):
@@ -170,16 +181,20 @@ print("\n" + "=" * 50)
 print("🎨 GENERATING VISUALIZATION")
 print("=" * 50)
 
+# Временно меняем глобальную переменную visualize_graph, чтобы она сохраняла в нужную папку
+# Для этого нужно также изменить файл visualization.py или передать параметр
+
 try:
     # Убеждаемся, что node_types передаются правильно
     visualize_graph(
         G=G,
         results=results,
         users=users,
-        node_types=node_types,  # Явно передаем node_types
-        blue_agent=blue_agent
+        node_types=node_types,
+        blue_agent=blue_agent,
+        output_path=VIZ_PATH  # Добавляем параметр с путем для сохранения
     )
-    print("✅ Visualization generated successfully!")
+    print(f"✅ Visualization generated successfully: {VIZ_PATH}")
 except Exception as e:
     print(f"❌ Error generating visualization: {e}")
     print("   Continuing anyway...")
@@ -189,7 +204,7 @@ print("✅ ALL DONE!")
 print("=" * 50)
 print(f"\n📁 Output files:")
 print(f"   - Simulation data: {OUTPUT_PATH}")
-print(f"   - Visualization: network_visualization_pro.html")
+print(f"   - Visualization: {VIZ_PATH}")
 print(f"\n📊 Summary:")
 print(f"   - Total users: {N_USERS + N_RED + N_LLM}")
 print(f"   - Red agents: {N_RED}")
@@ -197,4 +212,4 @@ print(f"   - Timeline events: {len(timeline)}")
 print(f"   - States snapshots: {len(states_history)}")
 if states_history:
     print(f"   - Time range: 0 to {len(states_history)-1}")
-print(f"\n💡 To view the visualization, open network_visualization_pro.html in your browser")
+print(f"\n💡 To view the visualization, open {VIZ_PATH} in your browser")

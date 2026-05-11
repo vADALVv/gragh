@@ -3,12 +3,10 @@ from __future__ import annotations
 import math
 import random
 import copy
-import json
-import networkx as nx
-
 from dataclasses import dataclass
 from typing import Dict, Optional, List, Set, Tuple
 from collections import defaultdict
+import networkx as nx
 
 
 # =====================================================
@@ -22,7 +20,6 @@ class Message:
     b: float
     h: float
     src: int
-    dst: Optional[int]
     t: int
     category: str
 
@@ -41,7 +38,6 @@ class RepostParams:
     lambda2: float = 2.0
     lambda3: float = 2.0
     lambda4: float = 1.0
-
     alpha: float = 3.0
     beta: float = 0.2
 
@@ -54,14 +50,19 @@ neutral_messages = []
 threat_messages = []
 manipulative_messages = []
 
-_MESSAGES_LOADED = False
+_msg_counter = 0
 
 
-def load_messages_json(path: str):
+def init_message_bank(path: str):
+    import json
+    global neutral_messages, threat_messages, manipulative_messages
+
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    neutral, threat, manipulative = [], [], []
+    neutral_messages.clear()
+    threat_messages.clear()
+    manipulative_messages.clear()
 
     for item in data:
         msg = {
@@ -73,25 +74,11 @@ def load_messages_json(path: str):
         t = item.get("type", "neutral")
 
         if t == "neutral":
-            neutral.append(msg)
+            neutral_messages.append(msg)
         elif t == "threat":
-            threat.append(msg)
+            threat_messages.append(msg)
         else:
-            manipulative.append(msg)
-
-    return neutral, threat, manipulative
-
-
-def init_message_bank(path: str):
-    global neutral_messages, threat_messages, manipulative_messages, _MESSAGES_LOADED
-    neutral_messages, threat_messages, manipulative_messages = load_messages_json(path)
-    _MESSAGES_LOADED = True
-    print(f"✅ Message bank loaded: {len(neutral_messages)} neutral, {len(threat_messages)} threat, {len(manipulative_messages)} manipulative")
-
-
-def _check_bank():
-    if not _MESSAGES_LOADED:
-        raise RuntimeError("Call init_message_bank(path)")
+            manipulative_messages.append(msg)
 
 
 # =====================================================
@@ -110,117 +97,67 @@ def kappa(b_i, b_m, alpha):
 # STATE UPDATE
 # =====================================================
 
-def update_user_state(state: UserState, msg: Message, rp: RepostParams) -> Tuple[UserState, float]:
+def update_user(state: UserState, msg: Message, rp: RepostParams):
+
     k = kappa(state.b, msg.b, rp.alpha)
 
-    e_new = max(-2, min(2, state.e + msg.h))
+    # эмоции — без насыщения в 2.0 (это ломало динамику)
+    e_new = state.e * 0.97 + msg.h * 0.35
+    e_new = max(-3, min(3, e_new))
 
+    # belief update
     b_new = state.b + state.c * rp.beta * k * (msg.b - state.b)
     b_new = max(-1, min(1, b_new))
 
-    return UserState(b_new, state.c, e_new), k
+    # learning rate НЕ должен быстро “умирать”
+    c_new = state.c + 0.003 * (k - 0.5)
+    c_new = max(0.05, min(1.0, c_new))
 
-
-# =====================================================
-# PROBABILITY
-# =====================================================
-
-def repost_probability(state: UserState, msg: Message, k: float, rel: float, rp: RepostParams) -> float:
-    x = (
-        rp.lambda0
-        + rp.lambda1 * k
-        + rp.lambda2 * state.e
-        + rp.lambda3 * msg.h
-        + rp.lambda4 * rel
-    )
-    return sigmoid(x)
+    return UserState(b_new, c_new, e_new), k
 
 
 # =====================================================
 # MESSAGE GENERATION
 # =====================================================
 
-_msg_counter = 0
-
-
-def generate_message(node_type: str, node_id: int, t: int) -> Optional[Message]:
+def generate(node_type: str, node_id: int, t: int) -> Optional[Message]:
     global _msg_counter
-    _check_bank()
 
-    if node_type == "U":  # USER - только нейтральные сообщения
-        if not neutral_messages:
-            return None
-        msg = random.choice(neutral_messages)
-        m = Message(
-            msg_id=_msg_counter,
-            text=msg["text"],
-            b=msg["b"],
-            h=msg["h"],
-            src=node_id,
-            dst=None,
-            t=t,
-            category="neutral"
-        )
-        _msg_counter += 1
-        return m
+    pool = (
+        neutral_messages if node_type == "U"
+        else threat_messages if node_type == "R"
+        else neutral_messages + threat_messages + manipulative_messages
+    )
 
-    elif node_type == "R":  # RED AGENT - только угрозы и манипуляции
-        all_threats = threat_messages + manipulative_messages
-        if not all_threats:
-            return None
-        msg = random.choice(all_threats)
-        # Определяем категорию
-        if msg in threat_messages:
-            category = "threat"
-        else:
-            category = "manipulative"
-        m = Message(
-            msg_id=_msg_counter,
-            text=msg["text"],
-            b=msg["b"],
-            h=msg["h"],
-            src=node_id,
-            dst=None,
-            t=t,
-            category=category
-        )
-        _msg_counter += 1
-        return m
-    
-    elif node_type == "L":  # LLM AGENT - любые сообщения
-        msg_type = random.choice(["neutral", "threat", "manipulative"])
-        if msg_type == "neutral" and neutral_messages:
-            msg = random.choice(neutral_messages)
-            category = "neutral"
-        elif msg_type == "threat" and threat_messages:
-            msg = random.choice(threat_messages)
-            category = "threat"
-        elif manipulative_messages:
-            msg = random.choice(manipulative_messages)
-            category = "manipulative"
-        else:
-            return None
-        
-        m = Message(
-            msg_id=_msg_counter,
-            text=msg["text"],
-            b=msg["b"],
-            h=msg["h"],
-            src=node_id,
-            dst=None,
-            t=t,
-            category=category
-        )
-        _msg_counter += 1
-        return m
+    if not pool:
+        return None
 
-    return None
+    m = random.choice(pool)
+
+    if m in threat_messages:
+        cat = "threat"
+    elif m in manipulative_messages:
+        cat = "manipulative"
+    else:
+        cat = "neutral"
+
+    msg = Message(
+        msg_id=_msg_counter,
+        text=m["text"],
+        b=m["b"],
+        h=m["h"],
+        src=node_id,
+        t=t,
+        category=cat
+    )
+
+    _msg_counter += 1
+    return msg
 
 
 # =====================================================
-# SIMULATION
+# SIMULATION (FIXED EPIDEMIC MODEL)
 # =====================================================
-
 def simulate_diffusion(
     G: nx.DiGraph,
     users: Dict[int, UserState],
@@ -229,177 +166,126 @@ def simulate_diffusion(
     rp: RepostParams = RepostParams(),
     seed: int = 42,
     messages_path: Optional[str] = None
-) -> Dict:
+):
 
     random.seed(seed)
 
     if messages_path:
         init_message_bank(messages_path)
 
-    # Копируем состояния пользователей
-    users_state = {k: copy.deepcopy(v) for k, v in users.items()}
+    # копия состояния
+    state = copy.deepcopy(users)
+
     timeline = []
-    
-    # Сохраняем состояния узлов на каждом временном шаге
-    states_history = []  # Список словарей {node_id: {b, c, e}} для каждого времени
-    
-    # Сохраняем начальное состояние (t = 0)
-    initial_states = {
-        str(k): {"b": v.b, "c": v.c, "e": v.e}
-        for k, v in users_state.items()
-    }
-    states_history.append(initial_states)
-    
-    # Отслеживаем, какие сообщения получил каждый пользователь
-    message_spread: Dict[int, Set[int]] = defaultdict(set)
-    
-    # Отслеживаем, какие сообщения отправил каждый пользователь
-    user_messages: Dict[int, List[Tuple[Message, int]]] = defaultdict(list)
+    history = []
 
-    # Очередь активных сообщений: (sender, message, age, path)
-    active_queue: List[Tuple[int, Message, int, List[int]]] = []
+    # msg_id -> заражённые узлы
+    infected: Dict[int, Set[int]] = defaultdict(set)
+
+    # 🔥 ВАЖНО: теперь фронтир = (node, message, age)
+    frontier: List[Tuple[int, Message, int]] = []
+
+    global _msg_counter
+    _msg_counter = 0
+
+    # initial snapshot
+    history.append({k: v.__dict__ for k, v in state.items()})
 
     # =====================================================
-    # INITIAL SEED - начальные сообщения в момент t=0
+    # INITIAL SEED
     # =====================================================
-    print("🌱 Generating initial messages...")
     for node_id, ntype in node_types.items():
-        msg = generate_message(ntype, node_id, 0)
+        msg = generate(ntype, node_id, 0)
         if msg:
-            active_queue.append((node_id, msg, 0, [node_id]))
-            message_spread[msg.msg_id].add(node_id)
-            user_messages[node_id].append((msg, 0))
-    
-    print(f"📨 Initial active messages: {len(active_queue)}")
+            frontier.append((node_id, msg, 0))
+            infected[msg.msg_id].add(node_id)
 
     # =====================================================
     # MAIN LOOP
     # =====================================================
     for t in range(T_steps):
-        print(f"\n⏰ Step {t}/{T_steps-1}, Active queue: {len(active_queue)}")
-        
-        # Генерируем новые сообщения от всех узлов в текущий момент времени
-        new_messages = []
-        for node_id, ntype in node_types.items():
-            # Красные агенты всегда генерируют сообщения
-            if ntype == "R":
-                msg = generate_message("R", node_id, t)
-                if msg:
-                    new_messages.append((node_id, msg))
-                    message_spread[msg.msg_id].add(node_id)
-                    user_messages[node_id].append((msg, t))
-            
-            # Обычные пользователи иногда генерируют сообщения
-            elif ntype == "U":
-                if random.random() < 0.3:  # 30% шанс создать сообщение
-                    msg = generate_message("U", node_id, t)
-                    if msg:
-                        new_messages.append((node_id, msg))
-                        message_spread[msg.msg_id].add(node_id)
-                        user_messages[node_id].append((msg, t))
-            
-            # LLM агенты генерируют сообщения с средней вероятностью
-            elif ntype == "L":
-                if random.random() < 0.4:  # 40% шанс
-                    msg = generate_message("L", node_id, t)
-                    if msg:
-                        new_messages.append((node_id, msg))
-                        message_spread[msg.msg_id].add(node_id)
-                        user_messages[node_id].append((msg, t))
-        
-        # Добавляем новые сообщения в очередь
-        for sender, msg in new_messages:
-            active_queue.append((sender, msg, 0, [sender]))
-        
-        # Обрабатываем текущую очередь
-        next_queue = []
-        
-        for sender, msg, age, path in active_queue:
-            
-            # Пропускаем слишком старые сообщения
-            if age > 5:
-                continue
-            
-            # Обновляем состояние отправителя
-            if sender in users_state:
-                state, k = update_user_state(users_state[sender], msg, rp)
-                users_state[sender] = state
-            else:
-                k = 1.0
-            
-            # Затухание со временем
-            decay = 0.85 ** age
-            
-            # Для каждого получателя
+
+        new_frontier: List[Tuple[int, Message, int]] = []
+
+        # лёгкая динамика эмоций (чтобы система не замерла)
+        for uid in state:
+            state[uid].e *= 0.98
+
+        # =================================================
+        # diffusion step
+        # =================================================
+        for sender, msg, age in frontier:
+
+            sender_state = state[sender]
+
             for receiver in G.successors(sender):
-                
-                # Проверяем, не получал ли уже этот пользователь данное сообщение
-                if receiver in message_spread[msg.msg_id]:
+
+                if receiver in infected[msg.msg_id]:
                     continue
-                
-                # Получаем вес ребра (сила связи)
+
                 rel = G[sender][receiver].get("weight", 1.0)
-                
-                # Вычисляем вероятность репоста
-                p = repost_probability(users_state[receiver], msg, k, rel, rp)
-                p *= decay
-                
-                # Репост
+
+                k_val = kappa(state[receiver].b, msg.b, rp.alpha)
+
+                viral_boost = 0.6 if msg.category in ("threat", "manipulative") else 0.0
+
+                p = sigmoid(
+                    rp.lambda0 +
+                    rp.lambda1 * k_val +
+                    rp.lambda2 * state[receiver].e +
+                    rp.lambda3 * msg.h +
+                    rp.lambda4 * rel +
+                    viral_boost
+                )
+
+                # мягкое затухание, но НЕ убийство цепочки
+                p *= (0.99 ** age)
+
                 if random.random() < p:
-                    # Обновляем состояние получателя
-                    if receiver in users_state:
-                        state_rec, _ = update_user_state(users_state[receiver], msg, rp)
-                        users_state[receiver] = state_rec
-                    
-                    # Отмечаем, что сообщение получено
-                    message_spread[msg.msg_id].add(receiver)
-                    
-                    # Добавляем в следующую очередь для дальнейшего распространения
-                    new_path = path + [receiver]
-                    next_queue.append((receiver, msg, age + 1, new_path))
-                    
-                    # Записываем событие в таймлайн
+
+                    # обновление состояния
+                    state[receiver], _ = update_user(state[receiver], msg, rp)
+
+                    infected[msg.msg_id].add(receiver)
+
+                    # 🔥 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ:
+                    # receiver становится новым источником распространения
+                    new_frontier.append((receiver, msg, 0))
+
                     timeline.append({
                         "t": t,
                         "from": sender,
                         "to": receiver,
                         "msg_id": msg.msg_id,
                         "text": msg.text,
+                        "category": msg.category,
                         "b": msg.b,
                         "h": msg.h,
-                        "category": msg.category,
-                        "event": "repost",
-                        "state_b": users_state[receiver].b,  # Сохраняем состояние получателя
-                        "state_c": users_state[receiver].c,
-                        "state_e": users_state[receiver].e
+                        "state_b": state[receiver].b,
+                        "state_c": state[receiver].c,
+                        "state_e": state[receiver].e
                     })
-        
-        # Обновляем очередь для следующего шага
-        active_queue = next_queue
-        
-        # Сохраняем состояние всех узлов после текущего шага (t+1)
-        current_states = {
-            str(k): {"b": v.b, "c": v.c, "e": v.e}
-            for k, v in users_state.items()
-        }
-        states_history.append(current_states)
-        
-        # Останавливаем, если больше нет активных сообщений
-        if not active_queue and not new_messages:
-            print(f"\n✅ No more active messages at t={t}, stopping simulation")
-            break
 
-    print(f"\n📊 Simulation complete!")
-    print(f"   Total timeline events: {len(timeline)}")
-    print(f"   Total messages generated: {_msg_counter}")
-    print(f"   Final users: {len(users_state)}")
-    print(f"   States history snapshots: {len(states_history)}")
-    
-    # Возвращаем результаты
+        # =================================================
+        # если активность упала → НЕ останавливаем систему
+        # добавляем новые источники (важно для устойчивости)
+        # =================================================
+        if not new_frontier:
+            for node_id, ntype in node_types.items():
+                if random.random() < 0.3:
+                    msg = generate(ntype, node_id, t)
+                    if msg:
+                        new_frontier.append((node_id, msg, 0))
+                        infected[msg.msg_id].add(node_id)
+
+        frontier = new_frontier
+
+        # snapshot ВСЕГДА
+        history.append({k: v.__dict__ for k, v in state.items()})
+
     return {
-        "users_final": {k: v.__dict__ for k, v in users_state.items()},
+        "users_final": {k: v.__dict__ for k, v in state.items()},
         "timeline": timeline,
-        "node_types": node_types,
-        "states_history": states_history,
+        "states_history": history,
         "total_messages": _msg_counter
     }
