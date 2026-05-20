@@ -1,91 +1,115 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, Tuple
-
+from typing import Tuple, Dict
 import networkx as nx
+from dataclasses import dataclass
 
-from threat_simulation import UserState
+
+@dataclass
+class UserState:
+    b: float
+    c: float
+    e: float
 
 
 SEED = 42
 random.seed(SEED)
 
 
-def _validate_inputs(num_u, num_r, num_l, avg_degree):
-    if num_u <= 0:
-        raise ValueError("num_u must be > 0")
-    if avg_degree <= 0:
-        raise ValueError("avg_degree must be > 0")
-
-
 def create_graph(
     num_u: int,
     num_r: int,
     num_l: int,
-    avg_degree: int
+    num_b: int = 0,
+    avg_degree: int = 4
 ) -> Tuple[nx.DiGraph, Dict[int, UserState], Dict[int, str]]:
 
-    _validate_inputs(num_u, num_r, num_l, avg_degree)
+    if num_u <= 0:
+        raise ValueError("num_u must be > 0")
 
-    # -----------------------------
-    # 1. U graph
-    # -----------------------------
-    num_groups = max(2, num_u // 50 or 1)
-    sizes = [num_u // num_groups] * num_groups
+    # -------------------------
+    # USER GRAPH (только U и R)
+    # -------------------------
+    k = max(2, int(avg_degree * 0.7))
+    if k % 2 != 0:
+        k += 1
+    if k >= num_u:
+        k = max(1, num_u - 1)
+        if k % 2 != 0 and k > 1:
+            k -= 1
 
-    p_intra = min(0.3, avg_degree / max(num_u, 1))
-    p_inter = p_intra * 0.1
-
-    probs = [
-        [p_intra if i == j else p_inter for j in range(num_groups)]
-        for i in range(num_groups)
-    ]
-
-    G_u = nx.stochastic_block_model(sizes, probs, seed=SEED)
+    G_u = nx.newman_watts_strogatz_graph(
+        n=num_u,
+        k=min(k, num_u - 1),
+        p=0.3,
+        seed=SEED
+    )
     G = G_u.to_directed()
 
-    # -----------------------------
-    # 2. Users (FIXED)
-    # -----------------------------
     users: Dict[int, UserState] = {}
     roles: Dict[int, str] = {}
 
+    # Пользователи (U)
     for node in G.nodes():
         users[node] = UserState(
             b=random.uniform(-1, 1),
-            c=random.uniform(0.3, 0.9),   # ✅ вместо s
+            c=random.uniform(0.3, 0.9),
             e=random.uniform(-1, 1)
         )
         roles[node] = "U"
 
     next_id = len(G.nodes())
-    all_users = list(users.keys())
+    base_nodes = list(G.nodes())
 
-    # -----------------------------
-    # 3. Red nodes
-    # -----------------------------
+    # Красные узлы (R)
     for _ in range(num_r):
         G.add_node(next_id)
         roles[next_id] = "R"
-
-        targets = random.sample(all_users, min(len(all_users), avg_degree * 2))
-        for t in targets:
-            G.add_edge(next_id, t, weight=random.uniform(0.5, 1.0))
-
+        users[next_id] = UserState(
+            b=random.uniform(-1, 1),
+            c=random.uniform(0.3, 0.9),
+            e=random.uniform(-1, 1)
+        )
+        if base_nodes:
+            targets = random.sample(base_nodes, min(len(base_nodes), avg_degree * 2))
+            for t in targets:
+                G.add_edge(next_id, t, weight=random.uniform(0.5, 1.0))
         next_id += 1
 
-    # -----------------------------
-    # 4. LLM nodes
-    # -----------------------------
+    # LLM узлы (L) – не имеют состояния, ставим нули
     for _ in range(num_l):
         G.add_node(next_id)
         roles[next_id] = "L"
-
-        targets = random.sample(all_users, min(len(all_users), avg_degree))
-        for t in targets:
-            G.add_edge(next_id, t, weight=random.uniform(0.4, 0.9))
-
+        users[next_id] = UserState(b=0.0, c=0.0, e=0.0)   # нет состояния
+        if base_nodes:
+            targets = random.sample(base_nodes, min(len(base_nodes), avg_degree))
+            for t in targets:
+                G.add_edge(next_id, t, weight=random.uniform(0.5, 1.0))
         next_id += 1
 
+    # Синие узлы-модераторы (B) – не имеют состояния
+    for _ in range(num_b):
+        G.add_node(next_id)
+        roles[next_id] = "B"
+        users[next_id] = UserState(b=0.0, c=0.0, e=0.0)   # нет состояния
+        if base_nodes:
+            targets = random.sample(base_nodes, min(len(base_nodes), avg_degree * 3))
+            for t in targets:
+                G.add_edge(next_id, t, weight=1.0)        # сильная связь для мониторинга
+        # связи между модераторами
+        blue_nodes_start = next_id - num_b
+        for existing_b in range(blue_nodes_start, next_id):
+            if existing_b >= 0 and existing_b != next_id:
+                G.add_edge(next_id, existing_b, weight=0.8)
+                G.add_edge(existing_b, next_id, weight=0.8)
+        next_id += 1
+
+    print(f"✅ Graph created with {next_id} nodes:")
+    print(f"   - Users (U): {num_u}")
+    print(f"   - Red agents (R): {num_r}")
+    print(f"   - LLM agents (L): {num_l}")
+    print(f"   - Blue moderators (B): {num_b}")
+
     return G, users, roles
+
