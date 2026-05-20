@@ -14,11 +14,19 @@ N_BLUE = 10
 AVG_DEGREE = 4
 T_STEPS = 40
 
-MESSAGES_PATH = r"C:\Users\Vlada\Desktop\llm_attaks\graph\data\messages.json"
-OUTPUT_DIR = "results"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-OUTPUT_PATH = os.path.join(OUTPUT_DIR, "simulation_result.json")
-VIZ_PATH = os.path.join(OUTPUT_DIR, "network_visualization_pro.html")
+MESSAGES_PATH = r"data/messages.json"
+
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+OUTPUT_DIR = BASE_DIR / "results"
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+OUTPUT_PATH = OUTPUT_DIR / "simulation_result.json"
+VIZ_PATH = OUTPUT_DIR / "network_visualization_pro.html"
+#os.makedirs(OUTPUT_DIR, exist_ok=True)
+#OUTPUT_PATH = os.path.join(OUTPUT_DIR, "simulation_result.json")
+#VIZ_PATH = os.path.join(OUTPUT_DIR, "network_visualization_pro.html")
 
 # ------------------------------------------------------------
 # НАСТРОЙКА РЕЖИМА LLM

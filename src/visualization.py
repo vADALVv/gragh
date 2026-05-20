@@ -3,6 +3,8 @@ from pyvis.network import Network
 import json
 from collections import defaultdict
 
+print("VISUALIZATION FILE LOADED")
+
 def visualize_graph(G, results, users, node_types=None, blue_agent=None, output_path="network_visualization_pro.html"):
     print("\n🔍 Generating visualization...")
 
